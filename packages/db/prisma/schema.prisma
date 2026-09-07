@@ -196,3 +196,16 @@ model BridgeMessage {
 
   @@index([processed, createdAt])
 }
+
+// ---------------------------------------------------------------------------
+// Telegram groups registered via the join password (no hardcoded chat id)
+// ---------------------------------------------------------------------------
+
+model TelegramChat {
+  id          String    @id @default(cuid())
+  chatId      String    @unique
+  title       String?
+  active      Boolean   @default(false)
+  joinedAt    DateTime  @default(now())
+  activatedAt DateTime?
+}

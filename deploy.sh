@@ -142,7 +142,7 @@ ensure_env() {
     ask_env DISCORD_TOKEN      "DISCORD_TOKEN"
     ask_env DISCORD_CLIENT_ID  "DISCORD_CLIENT_ID"
     ask_env TELEGRAM_BOT_TOKEN "TELEGRAM_BOT_TOKEN"
-    ask_env TELEGRAM_CHAT_ID   "TELEGRAM_CHAT_ID (можно позже)"
+    ask_env TELEGRAM_JOIN_PASSWORD "TELEGRAM_JOIN_PASSWORD (пароль активации группы)"
     ask_env DISCORD_GUILD_ID   "DISCORD_GUILD_ID (можно позже)"
     ask_env PANEL_PASSWORD     "PANEL_PASSWORD (пароль панели)"
   fi

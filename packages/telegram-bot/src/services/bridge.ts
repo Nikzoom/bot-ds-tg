@@ -9,6 +9,7 @@ import {
 } from "@dsbot/shared";
 import type { Bot } from "grammy";
 import { config } from "../config";
+import { getActiveChatIds } from "./chats";
 
 export async function startBridgePoller(bot: Bot): Promise<void> {
   const tick = async () => {
@@ -39,18 +40,42 @@ export async function startBridgePoller(bot: Bot): Promise<void> {
   setInterval(tick, config.pollIntervalMs);
 }
 
+/** Resolve the list of target chats (activated groups + optional env fallback). */
+function targetChats(): string[] {
+  const chats = getActiveChatIds();
+  if (config.chatId && !chats.includes(config.chatId)) {
+    chats.push(config.chatId);
+  }
+  return chats;
+}
+
 async function deliver(
   bot: Bot,
   kind: string,
   payload: BridgePayload,
   messageId: string
 ): Promise<void> {
-  const chatId = config.chatId;
-  if (!chatId) {
-    console.warn("TELEGRAM_CHAT_ID not set, skipping bridge delivery");
+  const chatIds = targetChats();
+  if (chatIds.length === 0) {
+    console.warn("No active Telegram chats to deliver to. Add the bot to a group and enter the join password.");
     return;
   }
 
+  for (const chatId of chatIds) {
+    try {
+      await deliverToChat(bot, chatId, kind, payload);
+    } catch (err) {
+      console.error(`Failed to deliver to chat ${chatId}:`, err);
+    }
+  }
+}
+
+async function deliverToChat(
+  bot: Bot,
+  chatId: string,
+  kind: string,
+  payload: BridgePayload
+): Promise<void> {
   switch (kind) {
     case "announce": {
       const p = payload as BridgePayloadAnnounce;
@@ -91,6 +116,6 @@ async function deliver(
     }
 
     default:
-      console.warn(`Unknown bridge kind: ${kind} (msg ${messageId})`);
+      console.warn(`Unknown bridge kind: ${kind}`);
   }
 }

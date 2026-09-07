@@ -3,6 +3,7 @@ import prisma, { computeScore } from "@dsbot/db";
 import { config } from "./config";
 import { startBridgePoller } from "./services/bridge";
 import { upsertTelegramUser } from "./services/users";
+import { activateChat, deactivateChat, isActive, loadActiveChats, registerChat } from "./services/chats";
 import { formatDuration, monthKey, monthLabelRu } from "@dsbot/shared";
 
 export const bot = new Bot(config.token);
@@ -134,9 +135,60 @@ bot.on("callback_query:data", async (ctx) => {
 });
 
 // ---------------------------------------------------------------------------
-// Message activity tracking (group chat)
+// Bot added / removed from a group
+// ---------------------------------------------------------------------------
+bot.on("my_chat_member", async (ctx) => {
+  const update = ctx.update.my_chat_member;
+  const chat = update.chat;
+  if (chat.type !== "group" && chat.type !== "supergroup") return;
+
+  const chatId = String(chat.id);
+  const newStatus = update.new_chat_member.status;
+  const oldStatus = update.old_chat_member.status;
+
+  if (newStatus === "left" || newStatus === "kicked") {
+    await deactivateChat(chatId);
+    return;
+  }
+
+  if (oldStatus === "left" || oldStatus === "kicked") {
+    await registerChat(chatId, chat.title);
+    await ctx.api.sendMessage(
+      chat.id,
+      "🔐 Бот добавлен в группу!\n\n" +
+        "Для активации напиши сюда пароль доступа (переменная TELEGRAM_JOIN_PASSWORD)."
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Message activity tracking (activated group chats)
 // ---------------------------------------------------------------------------
 bot.on("message:text", async (ctx) => {
+  const chat = ctx.chat;
+  const chatType = chat?.type;
+  const isGroup = chatType === "group" || chatType === "supergroup";
+  const chatId = chat ? String(chat.id) : "";
+  const text = ctx.message.text.trim();
+
+  // Activation via join password (groups only)
+  if (isGroup && !isActive(chatId)) {
+    if (text === config.joinPassword) {
+      await activateChat(chatId);
+      await ctx.reply(
+        "✅ Группа активирована!\n\n" +
+          "Теперь сюда будут приходить споры, награды и анонсы из Discord.\n" +
+          "Команды: /stats, /leaderboard, /rules"
+      );
+    } else if (!text.startsWith("/")) {
+      await ctx.reply("🔐 Неверный пароль. Напиши пароль доступа для активации.");
+    }
+    return;
+  }
+
+  // Only track community activity from activated groups, skip commands
+  if (!isGroup || !isActive(chatId) || text.startsWith("/")) return;
+
   const tgUser = ctx.from;
   if (!tgUser) return;
   const name = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ");
@@ -160,6 +212,7 @@ bot.on("message:text", async (ctx) => {
 });
 
 export async function start(): Promise<void> {
+  await loadActiveChats();
   await startBridgePoller(bot);
   console.log("✅ Telegram bot started (polling)...");
   await bot.start();

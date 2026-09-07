@@ -52,7 +52,8 @@ cp .env.example .env
 | `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` | [Discord Developer Portal](https://discord.com/developers/applications) → Bot |
 | `DISCORD_GUILD_ID` | ID твоего Discord-сервера (правый клик по серверу → Copy ID, нужен режим разработчика) |
 | `TELEGRAM_BOT_TOKEN` | [@BotFather](https://t.me/BotFather) |
-| `TELEGRAM_CHAT_ID` | ID группы (например `-1001234567890`) |
+| `TELEGRAM_JOIN_PASSWORD` | пароль, который нужно написать в группе после добавления бота (активация моста) |
+| `TELEGRAM_CHAT_ID` | **не обязателен** — только если хочешь фиксированный chat id |
 | `PANEL_PASSWORD` | пароль для входа в веб-панель |
 
 3. Запусти:
@@ -74,8 +75,10 @@ docker compose up -d --build
 ## Настройка Telegram-бота
 
 1. Создай бота у @BotFather.
-2. Добавь его в группу и выдай права администратора (нужно для чтения сообщений).
-3. Укажи `TELEGRAM_CHAT_ID` — ID чата можно узнать, написав боту сообщение и прочитав `update` (или через @userinfobot).
+2. Добавь его в группу (права администратора нужны для чтения сообщений).
+3. В группе бот попросит пароль — напиши значение `TELEGRAM_JOIN_PASSWORD`. Группа активируется, и сюда начнут приходить споры, награды и анонсы из Discord.
+
+`TELEGRAM_CHAT_ID` больше не нужен — бот сам запоминает активированные группы (можно добавлять несколько).
 
 ## Локальная разработка
 
