@@ -1,0 +1,28 @@
+{
+  "name": "ds-tg-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discord + Telegram community bot with activity tracking, rules engine, disputes and monthly awards",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @dsbot/db && npm run build -w @dsbot/shared && npm run build -w @dsbot/discord-bot && npm run build -w @dsbot/telegram-bot && npm run build -w @dsbot/web",
+    "dev:discord": "npm run dev -w @dsbot/discord-bot",
+    "dev:telegram": "npm run dev -w @dsbot/telegram-bot",
+    "dev:web": "npm run dev -w @dsbot/web",
+    "db:migrate": "npm run migrate -w @dsbot/db",
+    "db:generate": "npm run generate -w @dsbot/db",
+    "db:studio": "npm run studio -w @dsbot/db",
+    "lint": "npm run lint -w @dsbot/discord-bot && npm run lint -w @dsbot/telegram-bot && npm run lint -w @dsbot/web"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "prisma@6.19.3": true,
+    "esbuild@0.28.2": true
+  }
+}

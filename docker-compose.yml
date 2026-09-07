@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dsbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dsbot_password}
+      POSTGRES_DB: ${POSTGRES_DB:-dsbot}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dsbot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  discord-bot:
+    build:
+      context: .
+      dockerfile: packages/discord-bot/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy --schema /app/packages/db/prisma/schema.prisma && node dist/index.js"
+    working_dir: /app/packages/discord-bot
+
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: packages/telegram-bot/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy --schema /app/packages/db/prisma/schema.prisma && node dist/index.js"
+    working_dir: /app/packages/telegram-bot
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy --schema /app/packages/db/prisma/schema.prisma && npx next start -p 3000"
+    working_dir: /app/packages/web
+
+volumes:
+  pgdata:

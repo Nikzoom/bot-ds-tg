@@ -1,0 +1,198 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Users & linking
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  discordId    String?  @unique
+  telegramId   String?  @unique
+  displayName  String
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  voiceSessions    VoiceSession[]
+  presenceEvents   PresenceEvent[]
+  messageEvents    MessageEvent[]
+  dailyStats       DailyStat[]
+  disputeVotes     DisputeVote[]
+  awards           Award[]
+}
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+model GuildConfig {
+  id             String   @id @default(cuid())
+  name           String
+  discordGuildId String?  @unique
+  telegramChatId String?  @unique
+  // Weights for the activity score, customizable from the panel
+  settings       Json     @default("{\"scoreVoicePerMinute\":1,\"scoreMessage\":0.2,\"scorePresenceGame\":0.5}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Activity events
+// ---------------------------------------------------------------------------
+
+model VoiceSession {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guildId         String
+  channelId       String
+  channelName     String?
+  joinedAt        DateTime
+  leftAt          DateTime?
+  durationSeconds Int?
+  // Optional game tag assigned by a rule (e.g. "Valorant")
+  gameTag         String?
+
+  @@index([userId, joinedAt])
+  @@index([guildId, joinedAt])
+}
+
+model PresenceEvent {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guildId     String
+  gameName    String?
+  state       String?
+  startedAt   DateTime @default(now())
+  endedAt     DateTime?
+
+  @@index([userId, startedAt])
+}
+
+model MessageEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guildId   String
+  channelId String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([guildId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Rules engine (custom dependencies)
+// ---------------------------------------------------------------------------
+
+model Rule {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  enabled     Boolean  @default(true)
+  // voice | message | presence | cron
+  trigger     String
+  conditions  Json
+  actions     Json
+  priority    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([trigger, enabled])
+}
+
+// ---------------------------------------------------------------------------
+// Disputes (споры)
+// ---------------------------------------------------------------------------
+
+model Dispute {
+  id                String        @id @default(cuid())
+  title             String
+  description       String?
+  status            String        @default("open") // open | voting | closed | settled
+  createdBy         String
+  options           Json
+  winnerOptionIndex Int?
+  discordMessageId  String?
+  telegramMessageId String?
+  createdAt         DateTime      @default(now())
+  endsAt            DateTime?
+  closedAt          DateTime?
+  votes             DisputeVote[]
+
+  @@index([status, createdAt])
+}
+
+model DisputeVote {
+  id          String   @id @default(cuid())
+  disputeId   String
+  dispute     Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  optionIndex Int
+  createdAt   DateTime @default(now())
+
+  @@unique([disputeId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// Statistics (daily rollups)
+// ---------------------------------------------------------------------------
+
+model DailyStat {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date         DateTime @db.Date
+  voiceSeconds Int      @default(0)
+  messages     Int      @default(0)
+  // JSON map: game -> seconds, e.g. {"Valorant": 3600}
+  games        Json     @default("{}")
+  score        Float    @default(0)
+
+  @@unique([userId, date])
+  @@index([date])
+}
+
+// ---------------------------------------------------------------------------
+// Monthly awards
+// ---------------------------------------------------------------------------
+
+model Award {
+  id          String   @id @default(cuid())
+  // Format: "2026-09"
+  month       String
+  category    String   @default("most_active")
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  points      Float
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+
+  @@index([month])
+}
+
+// ---------------------------------------------------------------------------
+// Cross-platform bridge (Discord <-> Telegram)
+// ---------------------------------------------------------------------------
+
+model BridgeMessage {
+  id         String   @id @default(cuid())
+  kind       String // announce | dispute | award | stats
+  payload    Json
+  processed  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  processedAt DateTime?
+
+  @@index([processed, createdAt])
+}
