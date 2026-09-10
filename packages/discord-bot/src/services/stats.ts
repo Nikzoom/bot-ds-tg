@@ -3,6 +3,27 @@ import prisma, { VoiceSession, computeScore } from "@dsbot/db";
 /** In-memory map of currently active voice sessions keyed by userId. */
 const activeSessions = new Map<string, VoiceSession>();
 
+/**
+ * Close sessions that were left open by a previous crash/restart so time
+ * doesn't get double-counted when we backfill on the next start.
+ */
+export async function closeOrphanSessions(): Promise<number> {
+  const orphans = await prisma.voiceSession.findMany({ where: { leftAt: null } });
+  const now = new Date();
+  for (const s of orphans) {
+    const durationSeconds = Math.max(1, Math.round((now.getTime() - s.joinedAt.getTime()) / 1000));
+    await prisma.voiceSession.update({
+      where: { id: s.id },
+      data: { leftAt: now, durationSeconds },
+    });
+    await addToDailyStat(s.userId, s.joinedAt, {
+      voiceSeconds: durationSeconds,
+      games: s.gameTag ? { [s.gameTag]: durationSeconds } : {},
+    });
+  }
+  return orphans.length;
+}
+
 export async function startVoiceSession(
   userId: string,
   guildId: string,

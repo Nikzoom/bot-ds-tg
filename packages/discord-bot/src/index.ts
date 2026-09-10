@@ -19,7 +19,7 @@ const client = new Client({
 
 const engine = new RulesEngine(client);
 
-client.once("ready", () => onReady(client, engine));
+client.once("clientReady", () => onReady(client, engine));
 client.on("voiceStateUpdate", (o, n) => onVoiceStateUpdate(o, n).catch(console.error));
 client.on("messageCreate", (m) => onMessageCreate(m, engine).catch(console.error));
 client.on("interactionCreate", (i) => onInteractionCreate(i));

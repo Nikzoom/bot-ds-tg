@@ -63,8 +63,11 @@ check_disk() {
     avail="$(df -P -k / | awk 'NR==2 {print $4}')"
     avail=$((avail / 1024 / 1024))
     log "После очистки свободно: ${avail} ГБ"
-    [ "$avail" -lt 2 ] && die "Всё ещё мало места (<2 ГБ). Увеличь диск VPS."
+    if [ "$avail" -lt 2 ]; then
+      die "Всё ещё мало места (<2 ГБ). Увеличь диск VPS."
+    fi
   fi
+  return 0
 }
 
 # --- Базовые утилиты -----------------------------------------------------
@@ -174,7 +177,10 @@ ensure_env() {
       missing=1
     fi
   done
-  [ "$missing" -eq 1 ] && warn "Заполни их в .env и запусти: ${SUDO:-} $COMPOSE up -d --build"
+  if [ "$missing" -eq 1 ]; then
+    warn "Заполни их в .env и запусти: ${SUDO:-} $COMPOSE up -d --build"
+  fi
+  return 0
 }
 
 # --- Сборка и запуск -----------------------------------------------------

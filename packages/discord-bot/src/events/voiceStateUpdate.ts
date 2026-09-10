@@ -29,7 +29,9 @@ export async function onVoiceStateUpdate(
       newState.channelId!,
       newState.channel?.name ?? undefined
     );
+    console.log(`🎙️ ${user.displayName} зашёл в голосовой «${newState.channel?.name ?? newState.channelId}»`);
   } else if (left) {
     await endVoiceSession(dbUser.id);
+    console.log(`🔇 ${user.displayName} вышел из голосового`);
   }
 }
