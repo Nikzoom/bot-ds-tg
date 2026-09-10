@@ -3,7 +3,7 @@ import prisma from "@dsbot/db";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const body = await req.json();
-  const { name, description, enabled, trigger, conditions, actions, priority } = body;
+  const { name, description, enabled, trigger, conditions, actions, priority, cooldownSeconds, fireOnce, resetFired } = body;
 
   const data: Record<string, unknown> = {};
   if (name !== undefined) data.name = name;
@@ -13,6 +13,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (conditions !== undefined) data.conditions = conditions as object;
   if (actions !== undefined) data.actions = actions as object;
   if (priority !== undefined) data.priority = priority;
+  if (cooldownSeconds !== undefined) data.cooldownSeconds = cooldownSeconds ? Number(cooldownSeconds) : null;
+  if (fireOnce !== undefined) data.fireOnce = Boolean(fireOnce);
+  if (resetFired) data.lastFiredAt = null;
 
   const rule = await prisma.rule.update({ where: { id: params.id }, data });
   return NextResponse.json({ rule });

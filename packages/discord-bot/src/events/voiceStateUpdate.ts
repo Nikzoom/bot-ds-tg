@@ -16,7 +16,7 @@ export async function onVoiceStateUpdate(
   const user = newState.member ?? oldState.member;
   if (!user) return;
 
-  const dbUser = await upsertDiscordUser(
+  await upsertDiscordUser(
     user.id,
     user.displayName,
     user.user.displayAvatarURL()
@@ -24,14 +24,14 @@ export async function onVoiceStateUpdate(
 
   if (joined) {
     await startVoiceSession(
-      dbUser.id,
+      user.id,
       newState.guild.id,
       newState.channelId!,
       newState.channel?.name ?? undefined
     );
     console.log(`🎙️ ${user.displayName} зашёл в голосовой «${newState.channel?.name ?? newState.channelId}»`);
   } else if (left) {
-    await endVoiceSession(dbUser.id);
+    await endVoiceSession(user.id);
     console.log(`🔇 ${user.displayName} вышел из голосового`);
   }
 }

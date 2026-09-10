@@ -1,6 +1,6 @@
 import prisma, { VoiceSession, computeScore } from "@dsbot/db";
 
-/** In-memory map of currently active voice sessions keyed by userId. */
+/** In-memory map of currently active voice sessions, keyed by Discord user id. */
 const activeSessions = new Map<string, VoiceSession>();
 
 /**
@@ -24,23 +24,35 @@ export async function closeOrphanSessions(): Promise<number> {
   return orphans.length;
 }
 
+async function resolveUserByDiscordId(discordId: string) {
+  return (
+    (await prisma.user.findUnique({ where: { discordId } })) ??
+    (await prisma.user.upsert({
+      where: { discordId },
+      create: { discordId, displayName: discordId },
+      update: {},
+    }))
+  );
+}
+
 export async function startVoiceSession(
-  userId: string,
+  discordId: string,
   guildId: string,
   channelId: string,
   channelName?: string
 ): Promise<void> {
-  if (activeSessions.has(userId)) return;
+  if (activeSessions.has(discordId)) return;
+  const user = await resolveUserByDiscordId(discordId);
   const session = await prisma.voiceSession.create({
-    data: { userId, guildId, channelId, channelName, joinedAt: new Date() },
+    data: { userId: user.id, guildId, channelId, channelName, joinedAt: new Date() },
   });
-  activeSessions.set(userId, session);
+  activeSessions.set(discordId, session);
 }
 
-export async function endVoiceSession(userId: string): Promise<void> {
-  const session = activeSessions.get(userId);
+export async function endVoiceSession(discordId: string): Promise<void> {
+  const session = activeSessions.get(discordId);
   if (!session) return;
-  activeSessions.delete(userId);
+  activeSessions.delete(discordId);
   const leftAt = new Date();
   const durationSeconds = Math.max(
     1,
@@ -50,14 +62,14 @@ export async function endVoiceSession(userId: string): Promise<void> {
     where: { id: session.id },
     data: { leftAt, durationSeconds },
   });
-  await addToDailyStat(userId, session.joinedAt, {
+  await addToDailyStat(session.userId, session.joinedAt, {
     voiceSeconds: durationSeconds,
     games: gameDurationMap(session.gameTag, session.gameTagStartedAt, session.joinedAt, leftAt),
   });
 }
 
-export async function setSessionGameTag(userId: string, gameTag: string): Promise<void> {
-  const session = activeSessions.get(userId);
+export async function setSessionGameTag(discordId: string, gameTag: string): Promise<void> {
+  const session = activeSessions.get(discordId);
   if (!session) return;
   // Idempotent: only (re)start the timer when the tag actually changes
   if (session.gameTag === gameTag) return;
@@ -70,24 +82,8 @@ export async function setSessionGameTag(userId: string, gameTag: string): Promis
   session.gameTagStartedAt = now;
 }
 
-/**
- * Build the games map for a finished session: game time counts only from the
- * moment the tag was assigned (gameTagStartedAt), not the whole session.
- */
-function gameDurationMap(
-  gameTag: string | null | undefined,
-  gameTagStartedAt: Date | null | undefined,
-  joinedAt: Date,
-  endAt: Date
-): Record<string, number> {
-  if (!gameTag) return {};
-  const start = gameTagStartedAt ?? joinedAt;
-  const seconds = Math.max(1, Math.round((endAt.getTime() - start.getTime()) / 1000));
-  return { [gameTag]: seconds };
-}
-
-export function getActiveSession(userId: string): VoiceSession | undefined {
-  return activeSessions.get(userId);
+export function getActiveSession(discordId: string): VoiceSession | undefined {
+  return activeSessions.get(discordId);
 }
 
 export async function recordMessage(
@@ -132,4 +128,20 @@ export async function addToDailyStat(
     create: { userId, date: day, voiceSeconds, messages, games, score },
     update: { voiceSeconds, messages, games, score },
   });
+}
+
+/**
+ * Build the games map for a finished session: game time counts only from the
+ * moment the tag was assigned (gameTagStartedAt), not the whole session.
+ */
+function gameDurationMap(
+  gameTag: string | null | undefined,
+  gameTagStartedAt: Date | null | undefined,
+  joinedAt: Date,
+  endAt: Date
+): Record<string, number> {
+  if (!gameTag) return {};
+  const start = gameTagStartedAt ?? joinedAt;
+  const seconds = Math.max(1, Math.round((endAt.getTime() - start.getTime()) / 1000));
+  return { [gameTag]: seconds };
 }

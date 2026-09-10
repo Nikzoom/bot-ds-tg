@@ -49,13 +49,13 @@ async function backfillVoiceSessions(client: Client): Promise<void> {
       if (!vs.channelId || vs.member?.user.bot) continue;
       const member = vs.member;
       if (!member) continue;
-      const dbUser = await upsertDiscordUser(
+      await upsertDiscordUser(
         member.id,
         member.displayName,
         member.user.displayAvatarURL()
       );
       await startVoiceSession(
-        dbUser.id,
+        member.id,
         guild.id,
         vs.channelId,
         vs.channel?.name ?? undefined

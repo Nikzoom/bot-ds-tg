@@ -60,13 +60,57 @@ export interface CronCondition extends BaseCondition {
   expression: string;
 }
 
+/** True when at least N users are in voice (optionally in a specific channel). */
+export interface VoiceUsersCountCondition extends BaseCondition {
+  type: "voice_users_count";
+  minCount: number;
+  channelId?: string;
+  channelName?: string;
+}
+
+/** True when the listed users have accumulated at least minMinutes of voice time. */
+export interface UserVoiceTimeCondition extends BaseCondition {
+  type: "user_voice_time";
+  userIds: string[];
+  operator: "all" | "any";
+  minMinutes: number;
+  period: "day" | "week" | "month";
+}
+
+/** True when the listed users have sent at least minCount messages. */
+export interface UserMessagesCondition extends BaseCondition {
+  type: "user_messages";
+  userIds: string[];
+  operator: "all" | "any";
+  minCount: number;
+  period: "day" | "week" | "month";
+}
+
+/** True on the given weekdays (0=Sunday .. 6=Saturday). */
+export interface WeekdayCondition extends BaseCondition {
+  type: "weekday";
+  days: number[];
+}
+
+/** True when the current time is within [from, to) (HH:MM, 24h). */
+export interface TimeBetweenCondition extends BaseCondition {
+  type: "time_between";
+  from: string;
+  to: string;
+}
+
 export type Condition =
   | UsersInVoiceCondition
   | UserPlayingCondition
   | MessageContainsCondition
   | MessageInChannelCondition
   | UserInVoiceCondition
-  | CronCondition;
+  | CronCondition
+  | VoiceUsersCountCondition
+  | UserVoiceTimeCondition
+  | UserMessagesCondition
+  | WeekdayCondition
+  | TimeBetweenCondition;
 
 // ---------------------------------------------------------------------------
 // Actions
@@ -104,11 +148,46 @@ export interface LogStatAction extends BaseAction {
   value: number;
 }
 
+/** Award points to the matched users. */
+export interface GivePointsAction extends BaseAction {
+  type: "give_points";
+  points: number;
+}
+
+/** Assign a Discord role to the matched users. */
+export interface GiveRoleAction extends BaseAction {
+  type: "give_role";
+  roleId: string;
+}
+
+/** Remove a Discord role from the matched users. */
+export interface RemoveRoleAction extends BaseAction {
+  type: "remove_role";
+  roleId: string;
+}
+
+/** Move the matched users to a voice channel ("random" or a channel id). */
+export interface MoveUserAction extends BaseAction {
+  type: "move_user";
+  channelId: string; // "random" or a specific channel id
+}
+
+/** Send a Discord DM to the matched users. */
+export interface SendDmAction extends BaseAction {
+  type: "send_dm";
+  content: string;
+}
+
 export type Action =
   | AnnounceDiscordAction
   | AnnounceTelegramAction
   | AssignGameTagAction
-  | LogStatAction;
+  | LogStatAction
+  | GivePointsAction
+  | GiveRoleAction
+  | RemoveRoleAction
+  | MoveUserAction
+  | SendDmAction;
 
 // ---------------------------------------------------------------------------
 // Bridge messages

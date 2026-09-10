@@ -1,42 +1,65 @@
-import { Client, Guild, Message, TextChannel } from "discord.js";
-import prisma from "@dsbot/db";
+import {
+  Client,
+  ChannelType,
+  Guild,
+  GuildMember,
+  Message,
+  TextChannel,
+  VoiceChannel,
+} from "discord.js";
+import prisma, { Rule } from "@dsbot/db";
 import {
   Action,
   Condition,
+  ConditionOperator,
   UsersInVoiceCondition,
   UserInVoiceCondition,
   UserPlayingCondition,
   MessageContainsCondition,
   MessageInChannelCondition,
+  VoiceUsersCountCondition,
+  UserVoiceTimeCondition,
+  UserMessagesCondition,
+  WeekdayCondition,
+  TimeBetweenCondition,
   renderTemplate,
 } from "@dsbot/shared";
 import { pushBridgeMessage } from "./bridge";
+import { addPointsByDiscordId } from "./points";
 
 export interface VoiceContext {
   /** channelId -> set of userIds currently connected */
   channelUsers: Map<string, Set<string>>;
+  /** channelId -> channel name */
+  channelNames: Map<string, string>;
   /** all userIds currently connected */
   allUsers: Set<string>;
 }
 
-export interface MessageContext {
+interface EvalContext {
+  voice?: VoiceContext;
   guild: Guild;
-  message: Message;
+  message?: Message;
 }
 
 function buildVoiceContext(guild: Guild): VoiceContext {
   const channelUsers = new Map<string, Set<string>>();
+  const channelNames = new Map<string, string>();
   const allUsers = new Set<string>();
   for (const vs of guild.voiceStates.cache.values()) {
     if (!vs.channelId || vs.member?.user.bot) continue;
     allUsers.add(vs.id);
     if (!channelUsers.has(vs.channelId)) channelUsers.set(vs.channelId, new Set());
     channelUsers.get(vs.channelId)!.add(vs.id);
+    if (vs.channel?.name) channelNames.set(vs.channelId, vs.channel.name);
   }
-  return { channelUsers, allUsers };
+  return { channelUsers, channelNames, allUsers };
 }
 
-/** Largest number of the given users that share a single voice channel. */
+// ---------------------------------------------------------------------------
+// Condition evaluators
+// ---------------------------------------------------------------------------
+
 function maxColocated(ctx: VoiceContext, userIds: string[], channelFilter?: string): number {
   let best = 0;
   for (const [channelId, users] of ctx.channelUsers) {
@@ -48,36 +71,34 @@ function maxColocated(ctx: VoiceContext, userIds: string[], channelFilter?: stri
   return best;
 }
 
-function evalUsersInVoice(ctx: VoiceContext, c: UsersInVoiceCondition): boolean {
-  const colocated = maxColocated(ctx, c.userIds, c.channelId);
-  switch (c.operator) {
+function compareMeeting(
+  meeting: number,
+  total: number,
+  operator: ConditionOperator,
+  minCount?: number
+): boolean {
+  switch (operator) {
     case "all":
-      return colocated === c.userIds.length;
+      return meeting === total && total > 0;
     case "any":
-      return colocated >= 1;
+      return meeting >= 1;
     case "at_least":
-      return colocated >= (c.minCount ?? 1);
+      return meeting >= (minCount ?? 1);
     case "none":
-      return colocated === 0;
+      return meeting === 0;
     default:
       return false;
   }
 }
 
+function evalUsersInVoice(ctx: VoiceContext, c: UsersInVoiceCondition): boolean {
+  const colocated = maxColocated(ctx, c.userIds, c.channelId);
+  return compareMeeting(colocated, c.userIds.length, c.operator, c.minCount);
+}
+
 function evalUserInVoice(ctx: VoiceContext, c: UserInVoiceCondition): boolean {
   const present = c.userIds.filter((id) => ctx.allUsers.has(id)).length;
-  switch (c.operator) {
-    case "all":
-      return present === c.userIds.length;
-    case "any":
-      return present >= 1;
-    case "at_least":
-      return present >= (c.minCount ?? 1);
-    case "none":
-      return present === 0;
-    default:
-      return false;
-  }
+  return compareMeeting(present, c.userIds.length, c.operator, c.minCount);
 }
 
 function evalUserPlaying(guild: Guild, c: UserPlayingCondition): boolean {
@@ -85,18 +106,7 @@ function evalUserPlaying(guild: Guild, c: UserPlayingCondition): boolean {
     const pres = guild.presences.cache.get(id);
     return pres?.activities.some((a) => a.name.toLowerCase().includes(c.gameName.toLowerCase()));
   }).length;
-  switch (c.operator) {
-    case "all":
-      return playing === c.userIds.length;
-    case "any":
-      return playing >= 1;
-    case "at_least":
-      return playing >= (c.minCount ?? 1);
-    case "none":
-      return playing === 0;
-    default:
-      return false;
-  }
+  return compareMeeting(playing, c.userIds.length, c.operator, c.minCount);
 }
 
 function evalMessageContains(message: Message, c: MessageContainsCondition): boolean {
@@ -115,7 +125,82 @@ function evalMessageInChannel(message: Message, c: MessageInChannelCondition): b
   return true;
 }
 
-function evalCondition(cond: Condition, ctx: { voice?: VoiceContext; guild: Guild; message?: Message }): boolean {
+function evalVoiceUsersCount(ctx: VoiceContext | undefined, c: VoiceUsersCountCondition): boolean {
+  if (!ctx) return false;
+  if (c.channelId) return (ctx.channelUsers.get(c.channelId)?.size ?? 0) >= c.minCount;
+  if (c.channelName) {
+    const cid = [...ctx.channelNames.entries()].find(
+      ([, name]) => name.toLowerCase() === c.channelName!.toLowerCase()
+    )?.[0];
+    return cid ? (ctx.channelUsers.get(cid)?.size ?? 0) >= c.minCount : false;
+  }
+  return ctx.allUsers.size >= c.minCount;
+}
+
+function evalWeekday(c: WeekdayCondition): boolean {
+  return c.days.includes(new Date().getDay());
+}
+
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function evalTimeBetween(c: TimeBetweenCondition): boolean {
+  const now = new Date();
+  const cur = now.getHours() * 60 + now.getMinutes();
+  const from = toMinutes(c.from);
+  const to = toMinutes(c.to);
+  if (from <= to) return cur >= from && cur < to;
+  return cur >= from || cur < to; // overnight range
+}
+
+function periodRange(period: "day" | "week" | "month"): { from: Date; to: Date } {
+  const now = new Date();
+  if (period === "day") {
+    return { from: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())), to: now };
+  }
+  if (period === "week") {
+    return { from: new Date(now.getTime() - 7 * 24 * 3600 * 1000), to: now };
+  }
+  return { from: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)), to: now };
+}
+
+/** Count how many of the listed users meet a DailyStat threshold in a period. */
+async function usersMeetingStat(
+  userIds: string[],
+  period: "day" | "week" | "month",
+  field: "voiceSeconds" | "messages",
+  threshold: number
+): Promise<number> {
+  const users = await prisma.user.findMany({ where: { discordId: { in: userIds } } });
+  if (users.length === 0) return 0;
+  const ids = users.map((u) => u.id);
+  const { from, to } = periodRange(period);
+  const rows = await prisma.dailyStat.groupBy({
+    by: ["userId"],
+    where: { userId: { in: ids }, date: { gte: from, lt: to } },
+    _sum: { [field]: true } as never,
+  });
+  const sums = new Map(rows.map((r) => [r.userId, (r._sum as Record<string, number>)[field] ?? 0]));
+  let count = 0;
+  for (const u of users) {
+    if ((sums.get(u.id) ?? 0) >= threshold) count++;
+  }
+  return count;
+}
+
+async function evalUserVoiceTime(c: UserVoiceTimeCondition): Promise<boolean> {
+  const meeting = await usersMeetingStat(c.userIds, c.period, "voiceSeconds", c.minMinutes * 60);
+  return c.operator === "all" ? meeting === c.userIds.length : meeting >= 1;
+}
+
+async function evalUserMessages(c: UserMessagesCondition): Promise<boolean> {
+  const meeting = await usersMeetingStat(c.userIds, c.period, "messages", c.minCount);
+  return c.operator === "all" ? meeting === c.userIds.length : meeting >= 1;
+}
+
+async function evalCondition(cond: Condition, ctx: EvalContext): Promise<boolean> {
   switch (cond.type) {
     case "users_in_voice":
       return ctx.voice ? evalUsersInVoice(ctx.voice, cond) : false;
@@ -127,20 +212,76 @@ function evalCondition(cond: Condition, ctx: { voice?: VoiceContext; guild: Guil
       return ctx.message ? evalMessageContains(ctx.message, cond) : false;
     case "message_in_channel":
       return ctx.message ? evalMessageInChannel(ctx.message, cond) : false;
+    case "voice_users_count":
+      return evalVoiceUsersCount(ctx.voice, cond);
+    case "user_voice_time":
+      return evalUserVoiceTime(cond);
+    case "user_messages":
+      return evalUserMessages(cond);
+    case "weekday":
+      return evalWeekday(cond);
+    case "time_between":
+      return evalTimeBetween(cond);
     default:
       return false;
   }
 }
 
+async function evaluateConditions(conditions: Condition[], ctx: EvalContext): Promise<boolean> {
+  for (const c of conditions) {
+    if (!(await evalCondition(c, ctx))) return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Action helpers
+// ---------------------------------------------------------------------------
+
+function targetDiscordIds(ctx: EvalContext): string[] {
+  if (ctx.voice) return [...ctx.voice.allUsers];
+  if (ctx.message) return [ctx.message.author.id];
+  return [];
+}
+
+async function getMembers(guild: Guild, discordIds: string[]): Promise<GuildMember[]> {
+  const members: GuildMember[] = [];
+  for (const id of discordIds) {
+    const m =
+      guild.members.cache.get(id) ?? (await guild.members.fetch(id).catch(() => null));
+    if (m) members.push(m);
+  }
+  return members;
+}
+
+// ---------------------------------------------------------------------------
+// Engine
+// ---------------------------------------------------------------------------
+
 export class RulesEngine {
   constructor(private client: Client) {}
 
   private guild(): Guild | undefined {
-    return this.client.guilds.cache.find((g) => g.id === process.env.DISCORD_GUILD_ID) ??
-      this.client.guilds.cache.first();
+    return (
+      this.client.guilds.cache.find((g) => g.id === process.env.DISCORD_GUILD_ID) ??
+      this.client.guilds.cache.first()
+    );
   }
 
-  /** Evaluate voice-triggered rules against the current voice state. */
+  private async shouldFire(rule: Rule, now: Date): Promise<boolean> {
+    if (!rule.lastFiredAt) return true;
+    if (rule.fireOnce) return false;
+    if (rule.cooldownSeconds) {
+      const elapsed = (now.getTime() - rule.lastFiredAt.getTime()) / 1000;
+      if (elapsed < rule.cooldownSeconds) return false;
+    }
+    return true;
+  }
+
+  private async markFired(rule: Rule, now: Date): Promise<void> {
+    await prisma.rule.update({ where: { id: rule.id }, data: { lastFiredAt: now } });
+  }
+
   async evaluateVoiceRules(): Promise<void> {
     const guild = this.guild();
     if (!guild) return;
@@ -149,17 +290,18 @@ export class RulesEngine {
       orderBy: { priority: "asc" },
     });
     const voice = buildVoiceContext(guild);
+    const now = new Date();
     for (const rule of rules) {
       const conditions = rule.conditions as unknown as Condition[];
       const actions = rule.actions as unknown as Action[];
-      const ctx = { voice, guild };
-      if (conditions.every((c) => evalCondition(c, ctx))) {
-        await this.executeActions(actions, { voice, guild });
-      }
+      const ctx: EvalContext = { voice, guild };
+      if (!(await evaluateConditions(conditions, ctx))) continue;
+      if (!(await this.shouldFire(rule, now))) continue;
+      await this.executeActions(actions, ctx);
+      await this.markFired(rule, now);
     }
   }
 
-  /** Evaluate message-triggered rules. */
   async evaluateMessageRules(message: Message): Promise<void> {
     if (message.author.bot) return;
     const guild = message.guild;
@@ -168,21 +310,22 @@ export class RulesEngine {
       where: { trigger: "message", enabled: true },
       orderBy: { priority: "asc" },
     });
+    const now = new Date();
     for (const rule of rules) {
       const conditions = rule.conditions as unknown as Condition[];
       const actions = rule.actions as unknown as Action[];
-      const ctx = { guild, message };
-      if (conditions.every((c) => evalCondition(c, ctx))) {
-        await this.executeActions(actions, ctx);
-      }
+      const ctx: EvalContext = { guild, message };
+      if (!(await evaluateConditions(conditions, ctx))) continue;
+      if (!(await this.shouldFire(rule, now))) continue;
+      await this.executeActions(actions, ctx);
+      await this.markFired(rule, now);
     }
   }
 
-  private async executeActions(
-    actions: Action[],
-    ctx: { voice?: VoiceContext; guild: Guild; message?: Message }
-  ): Promise<void> {
+  private async executeActions(actions: Action[], ctx: EvalContext): Promise<void> {
     const usersInVoice = ctx.voice ? [...ctx.voice.allUsers] : [];
+    const targets = targetDiscordIds(ctx);
+
     for (const action of actions) {
       switch (action.type) {
         case "announce_discord": {
@@ -225,8 +368,47 @@ export class RulesEngine {
           }
           break;
         }
+        case "give_points": {
+          for (const id of targets) {
+            await addPointsByDiscordId(id, action.points, "rule");
+          }
+          break;
+        }
+        case "give_role": {
+          const members = await getMembers(ctx.guild, targets);
+          for (const m of members) await m.roles.add(action.roleId).catch(() => null);
+          break;
+        }
+        case "remove_role": {
+          const members = await getMembers(ctx.guild, targets);
+          for (const m of members) await m.roles.remove(action.roleId).catch(() => null);
+          break;
+        }
+        case "move_user": {
+          let channel: VoiceChannel | null = null;
+          if (action.channelId === "random") {
+            const vcs = ctx.guild.channels.cache.filter(
+              (c) => c.type === ChannelType.GuildVoice
+            );
+            channel = (vcs.random() as VoiceChannel | undefined) ?? null;
+          } else {
+            channel = (await ctx.guild.channels.fetch(action.channelId).catch(() => null)) as
+              | VoiceChannel
+              | null;
+          }
+          if (!channel) continue;
+          const members = await getMembers(ctx.guild, targets);
+          for (const m of members) {
+            if (m.voice.channelId) await m.voice.setChannel(channel).catch(() => null);
+          }
+          break;
+        }
+        case "send_dm": {
+          const members = await getMembers(ctx.guild, targets);
+          for (const m of members) await m.send(action.content).catch(() => null);
+          break;
+        }
         case "log_stat": {
-          // Custom metric events can be surfaced on the panel later.
           break;
         }
       }

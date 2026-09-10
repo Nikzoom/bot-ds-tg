@@ -8,7 +8,17 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { name, description, enabled = true, trigger, conditions, actions, priority = 0 } = body;
+  const {
+    name,
+    description,
+    enabled = true,
+    trigger,
+    conditions,
+    actions,
+    priority = 0,
+    cooldownSeconds = null,
+    fireOnce = false,
+  } = body;
 
   if (!name || !trigger || !Array.isArray(conditions) || !Array.isArray(actions)) {
     return NextResponse.json({ error: "Неполные данные правила" }, { status: 400 });
@@ -23,6 +33,8 @@ export async function POST(req: NextRequest) {
       conditions: conditions as object,
       actions: actions as object,
       priority,
+      cooldownSeconds: cooldownSeconds ? Number(cooldownSeconds) : null,
+      fireOnce: Boolean(fireOnce),
     },
   });
 

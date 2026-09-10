@@ -82,6 +82,79 @@ const CONDITION_TYPES: Record<string, { label: string; fields: FieldDef[] }> = {
       { key: "channelName", label: "Или имя канала", type: "text" },
     ],
   },
+  voice_users_count: {
+    label: "В голосе ≥ N человек",
+    fields: [
+      { key: "minCount", label: "Минимум человек", type: "text", placeholder: "3" },
+      { key: "channelId", label: "В канале (ID, опционально)", type: "text" },
+      { key: "channelName", label: "Или имя канала", type: "text" },
+    ],
+  },
+  user_voice_time: {
+    label: "Пользователь набрал время в голосе",
+    fields: [
+      { key: "userIds", label: "Discord ID (через запятую)", type: "text" },
+      {
+        key: "operator",
+        label: "Условие",
+        type: "select",
+        options: [
+          { value: "any", label: "Хотя бы один" },
+          { value: "all", label: "Все" },
+        ],
+      },
+      { key: "minMinutes", label: "Минимум минут", type: "text", placeholder: "60" },
+      {
+        key: "period",
+        label: "Период",
+        type: "select",
+        options: [
+          { value: "day", label: "За день" },
+          { value: "week", label: "За неделю" },
+          { value: "month", label: "За месяц" },
+        ],
+      },
+    ],
+  },
+  user_messages: {
+    label: "Пользователь написал сообщений",
+    fields: [
+      { key: "userIds", label: "Discord ID (через запятую)", type: "text" },
+      {
+        key: "operator",
+        label: "Условие",
+        type: "select",
+        options: [
+          { value: "any", label: "Хотя бы один" },
+          { value: "all", label: "Все" },
+        ],
+      },
+      { key: "minCount", label: "Минимум сообщений", type: "text", placeholder: "50" },
+      {
+        key: "period",
+        label: "Период",
+        type: "select",
+        options: [
+          { value: "day", label: "За день" },
+          { value: "week", label: "За неделю" },
+          { value: "month", label: "За месяц" },
+        ],
+      },
+    ],
+  },
+  weekday: {
+    label: "День недели",
+    fields: [
+      { key: "days", label: "Дни (0=Вс, 1=Пн, ..., 6=Сб, через запятую)", type: "text", placeholder: "5,6" },
+    ],
+  },
+  time_between: {
+    label: "Время дня",
+    fields: [
+      { key: "from", label: "С (ЧЧ:ММ)", type: "text", placeholder: "20:00" },
+      { key: "to", label: "До (ЧЧ:ММ)", type: "text", placeholder: "23:59" },
+    ],
+  },
 };
 
 const ACTION_TYPES: Record<string, { label: string; fields: FieldDef[] }> = {
@@ -102,6 +175,26 @@ const ACTION_TYPES: Record<string, { label: string; fields: FieldDef[] }> = {
   assign_game_tag: {
     label: "Пометить как игру",
     fields: [{ key: "gameTag", label: "Название игры (тег)", type: "text", placeholder: "Valorant" }],
+  },
+  give_points: {
+    label: "Начислить очки",
+    fields: [{ key: "points", label: "Сколько очков", type: "text", placeholder: "50" }],
+  },
+  give_role: {
+    label: "Выдать роль Discord",
+    fields: [{ key: "roleId", label: "ID роли", type: "text" }],
+  },
+  remove_role: {
+    label: "Снять роль Discord",
+    fields: [{ key: "roleId", label: "ID роли", type: "text" }],
+  },
+  move_user: {
+    label: "Переместить в голосовой канал",
+    fields: [{ key: "channelId", label: "ID канала или «random»", type: "text", placeholder: "random" }],
+  },
+  send_dm: {
+    label: "Сообщение в ЛС Discord",
+    fields: [{ key: "content", label: "Текст", type: "textarea", placeholder: "Привет!" }],
   },
 };
 
@@ -145,6 +238,30 @@ function normalizeCondition(c: Record<string, unknown>): Record<string, unknown>
     if (c.channelId) out.channelId = String(c.channelId);
     if (c.channelName) out.channelName = String(c.channelName);
   }
+  if (c.type === "voice_users_count") {
+    if (c.minCount) out.minCount = Number(c.minCount);
+    if (c.channelId) out.channelId = String(c.channelId);
+    if (c.channelName) out.channelName = String(c.channelName);
+  }
+  if (c.type === "user_voice_time") {
+    out.userIds = toList(String(c.userIds ?? ""));
+    out.operator = c.operator;
+    if (c.minMinutes) out.minMinutes = Number(c.minMinutes);
+    out.period = c.period ?? "month";
+  }
+  if (c.type === "user_messages") {
+    out.userIds = toList(String(c.userIds ?? ""));
+    out.operator = c.operator;
+    if (c.minCount) out.minCount = Number(c.minCount);
+    out.period = c.period ?? "month";
+  }
+  if (c.type === "weekday") {
+    out.days = toList(String(c.days ?? "")).map(Number).filter((n) => !Number.isNaN(n));
+  }
+  if (c.type === "time_between") {
+    out.from = String(c.from ?? "");
+    out.to = String(c.to ?? "");
+  }
   return out;
 }
 
@@ -162,6 +279,18 @@ function normalizeAction(a: Record<string, unknown>): Record<string, unknown> {
   if (a.type === "assign_game_tag") {
     out.gameTag = String(a.gameTag ?? "");
   }
+  if (a.type === "give_points") {
+    out.points = Number(a.points ?? 0);
+  }
+  if (a.type === "give_role" || a.type === "remove_role") {
+    out.roleId = String(a.roleId ?? "");
+  }
+  if (a.type === "move_user") {
+    out.channelId = String(a.channelId ?? "random");
+  }
+  if (a.type === "send_dm") {
+    out.content = String(a.content ?? "");
+  }
   return out;
 }
 
@@ -174,6 +303,8 @@ export default function RuleEditor() {
     emptyCondition("users_in_voice"),
   ]);
   const [actions, setActions] = useState<Record<string, unknown>[]>([emptyAction("announce_telegram")]);
+  const [cooldownSeconds, setCooldownSeconds] = useState("");
+  const [fireOnce, setFireOnce] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -195,6 +326,8 @@ export default function RuleEditor() {
           name,
           description: description || null,
           trigger,
+          cooldownSeconds: cooldownSeconds ? Number(cooldownSeconds) : null,
+          fireOnce,
           conditions: conditions.map(normalizeCondition),
           actions: actions.map(normalizeAction),
         }),
@@ -234,6 +367,27 @@ export default function RuleEditor() {
           <option value="message">Сообщение</option>
           <option value="presence">Присутствие (игра)</option>
         </select>
+      </div>
+
+      <div className="gap">
+        <div className="field" style={{ flex: 1 }}>
+          <label>Кулдаун (сек, пусто = без ограничения)</label>
+          <input
+            value={cooldownSeconds}
+            onChange={(e) => setCooldownSeconds(e.target.value)}
+            placeholder="60"
+            type="number"
+          />
+        </div>
+        <div className="field" style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <input
+            type="checkbox"
+            checked={fireOnce}
+            onChange={(e) => setFireOnce(e.target.checked)}
+            style={{ width: "auto" }}
+          />
+          <label style={{ margin: 0 }}>Сработать только один раз</label>
+        </div>
       </div>
 
       <div className="divider" />

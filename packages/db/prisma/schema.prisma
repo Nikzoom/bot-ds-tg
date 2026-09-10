@@ -17,6 +17,8 @@ model User {
   telegramId   String?  @unique
   displayName  String
   avatarUrl    String?
+  // Points currency (spent in the reward shop, earned via quests/rules)
+  points       Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -26,6 +28,7 @@ model User {
   dailyStats       DailyStat[]
   disputeVotes     DisputeVote[]
   awards           Award[]
+  pointLogs        PointLog[]
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +108,11 @@ model Rule {
   conditions  Json
   actions     Json
   priority    Int      @default(0)
+  // How often the rule may fire (seconds). null = no limit
+  cooldownSeconds Int?
+  // Fire only once (until the flag is reset)
+  fireOnce    Boolean  @default(false)
+  lastFiredAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -226,4 +234,19 @@ model MentionMap {
   telegramId      String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Points ledger (earned via quests/rules, spent in the reward shop)
+// ---------------------------------------------------------------------------
+
+model PointLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Int // positive = earned, negative = spent
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
