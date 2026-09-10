@@ -18,7 +18,7 @@ export async function closeOrphanSessions(): Promise<number> {
     });
     await addToDailyStat(s.userId, s.joinedAt, {
       voiceSeconds: durationSeconds,
-      games: s.gameTag ? { [s.gameTag]: durationSeconds } : {},
+      games: gameDurationMap(s.gameTag, s.gameTagStartedAt, s.joinedAt, now),
     });
   }
   return orphans.length;
@@ -52,17 +52,38 @@ export async function endVoiceSession(userId: string): Promise<void> {
   });
   await addToDailyStat(userId, session.joinedAt, {
     voiceSeconds: durationSeconds,
-    games: session.gameTag ? { [session.gameTag]: durationSeconds } : {},
+    games: gameDurationMap(session.gameTag, session.gameTagStartedAt, session.joinedAt, leftAt),
   });
 }
 
 export async function setSessionGameTag(userId: string, gameTag: string): Promise<void> {
   const session = activeSessions.get(userId);
   if (!session) return;
+  // Idempotent: only (re)start the timer when the tag actually changes
+  if (session.gameTag === gameTag) return;
+  const now = new Date();
   await prisma.voiceSession.update({
     where: { id: session.id },
-    data: { gameTag },
+    data: { gameTag, gameTagStartedAt: now },
   });
+  session.gameTag = gameTag;
+  session.gameTagStartedAt = now;
+}
+
+/**
+ * Build the games map for a finished session: game time counts only from the
+ * moment the tag was assigned (gameTagStartedAt), not the whole session.
+ */
+function gameDurationMap(
+  gameTag: string | null | undefined,
+  gameTagStartedAt: Date | null | undefined,
+  joinedAt: Date,
+  endAt: Date
+): Record<string, number> {
+  if (!gameTag) return {};
+  const start = gameTagStartedAt ?? joinedAt;
+  const seconds = Math.max(1, Math.round((endAt.getTime() - start.getTime()) / 1000));
+  return { [gameTag]: seconds };
 }
 
 export function getActiveSession(userId: string): VoiceSession | undefined {

@@ -76,35 +76,40 @@ bot.command("stats", async (ctx) => {
 bot.command("leaderboard", async (ctx) => {
   if (!isPrivate(ctx)) return;
 
-  const { from, to } = monthRange(monthKey());
-  const rows = await prisma.dailyStat.groupBy({
-    by: ["userId"],
-    where: { date: { gte: from, lt: to } },
-    _sum: { score: true, voiceSeconds: true, messages: true },
-    orderBy: { _sum: { score: "desc" } },
-    take: 10,
-  });
+  try {
+    const { from, to } = monthRange(monthKey());
+    const rows = await prisma.dailyStat.groupBy({
+      by: ["userId"],
+      where: { date: { gte: from, lt: to } },
+      _sum: { score: true, voiceSeconds: true, messages: true },
+      orderBy: { _sum: { score: "desc" } },
+      take: 10,
+    });
 
-  if (rows.length === 0) {
-    await ctx.reply("Пока нет данных за этот месяц.");
-    return;
+    if (rows.length === 0) {
+      await ctx.reply("Пока нет данных за этот месяц.");
+      return;
+    }
+
+    const users = await prisma.user.findMany({ where: { id: { in: rows.map((r) => r.userId) } } });
+    const map = new Map(users.map((u) => [u.id, u]));
+    const medals = ["🥇", "🥈", "🥉"];
+
+    const lines = rows
+      .map((r, i) => {
+        const u = map.get(r.userId);
+        const medal = medals[i] ?? `${i + 1}.`;
+        return `${medal} ${u?.displayName ?? "?"} — ${(r._sum.score ?? 0).toFixed(1)} очков`;
+      })
+      .join("\n");
+
+    await ctx.reply(`🏆 *Топ активных — ${monthLabelRu(monthKey())}*\n\n${lines}`, {
+      parse_mode: "Markdown",
+    });
+  } catch (err) {
+    console.error("leaderboard error:", err);
+    await ctx.reply(`⚠️ Ошибка: ${(err as Error).message}`).catch(() => null);
   }
-
-  const users = await prisma.user.findMany({ where: { id: { in: rows.map((r) => r.userId) } } });
-  const map = new Map(users.map((u) => [u.id, u]));
-  const medals = ["🥇", "🥈", "🥉"];
-
-  const lines = rows
-    .map((r, i) => {
-      const u = map.get(r.userId);
-      const medal = medals[i] ?? `${i + 1}.`;
-      return `${medal} ${u?.displayName ?? "?"} — ${(r._sum.score ?? 0).toFixed(1)} очков`;
-    })
-    .join("\n");
-
-  await ctx.reply(`🏆 *Топ активных — ${monthLabelRu(monthKey())}*\n\n${lines}`, {
-    parse_mode: "Markdown",
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -213,6 +218,9 @@ bot.on("message:text", async (ctx) => {
 });
 
 export async function start(): Promise<void> {
+  bot.catch((err) => {
+    console.error("⚠️ TG bot error:", err.error ?? err);
+  });
   await loadActiveChats();
   await startBridgePoller(bot);
   console.log("✅ Telegram bot started (polling)...");

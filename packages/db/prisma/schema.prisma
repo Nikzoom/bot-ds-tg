@@ -59,6 +59,8 @@ model VoiceSession {
   durationSeconds Int?
   // Optional game tag assigned by a rule (e.g. "Valorant")
   gameTag         String?
+  // When the game tag was assigned (so game time counts from that moment)
+  gameTagStartedAt DateTime?
 
   @@index([userId, joinedAt])
   @@index([guildId, joinedAt])
