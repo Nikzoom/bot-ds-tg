@@ -209,3 +209,17 @@ model TelegramChat {
   joinedAt    DateTime  @default(now())
   activatedAt DateTime?
 }
+
+// ---------------------------------------------------------------------------
+// Manual Discord -> Telegram mention mapping (configured from the panel)
+// ---------------------------------------------------------------------------
+
+model MentionMap {
+  id              String   @id @default(cuid())
+  // Discord username / display name / user id (matched case-insensitively)
+  discordKey      String   @unique
+  // "@username" or a numeric telegram user id
+  telegramMention String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

@@ -134,9 +134,20 @@ export interface BridgePayloadAnnounce {
   content: string;
 }
 
-export type BridgePayload = BridgePayloadDispute | BridgePayloadAward | BridgePayloadAnnounce;
+export interface BridgePayloadPing {
+  discordName: string;
+  channelName: string;
+  mentionerName: string;
+  telegramMention: string | null;
+}
 
-export type BridgeKind = "announce" | "dispute" | "award" | "stats";
+export type BridgePayload =
+  | BridgePayloadDispute
+  | BridgePayloadAward
+  | BridgePayloadAnnounce
+  | BridgePayloadPing;
+
+export type BridgeKind = "announce" | "dispute" | "award" | "stats" | "ping";
 
 // ---------------------------------------------------------------------------
 // Templates

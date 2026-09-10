@@ -5,6 +5,7 @@ import {
   BridgePayloadAnnounce,
   BridgePayloadAward,
   BridgePayloadDispute,
+  BridgePayloadPing,
   monthLabelRu,
 } from "@dsbot/shared";
 import type { Bot } from "grammy";
@@ -115,7 +116,29 @@ async function deliverToChat(
       break;
     }
 
+    case "ping": {
+      const p = payload as BridgePayloadPing;
+      const target = formatMention(p.telegramMention, p.discordName);
+      await bot.api.sendMessage(
+        chatId,
+        `🔔 ${target}, тебя пинганули в Discord!\n` +
+          `📢 От: ${p.mentionerName}\n` +
+          `📁 Канал: ${p.channelName}`,
+        { parse_mode: "Markdown" }
+      );
+      break;
+    }
+
     default:
       console.warn(`Unknown bridge kind: ${kind}`);
   }
+}
+
+/** Build a Telegram mention string from the configured value. */
+function formatMention(telegramMention: string | null, discordName: string): string {
+  if (!telegramMention) return `@${discordName}`;
+  if (/^\d+$/.test(telegramMention)) {
+    return `[${discordName}](tg://user?id=${telegramMention})`;
+  }
+  return telegramMention;
 }

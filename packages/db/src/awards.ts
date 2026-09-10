@@ -2,7 +2,7 @@ import { prisma } from "./client";
 import { getLeaderboard, monthRange } from "./leaderboard";
 
 export async function pushBridgeMessage(
-  kind: "announce" | "dispute" | "award" | "stats",
+  kind: "announce" | "dispute" | "award" | "stats" | "ping",
   payload: object
 ): Promise<void> {
   await prisma.bridgeMessage.create({ data: { kind, payload } });

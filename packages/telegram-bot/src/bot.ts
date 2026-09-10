@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard } from "grammy";
+import { Bot } from "grammy";
 import prisma, { computeScore } from "@dsbot/db";
 import { config } from "./config";
 import { startBridgePoller } from "./services/bridge";

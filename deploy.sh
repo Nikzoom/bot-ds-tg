@@ -3,16 +3,17 @@
 # deploy.sh — установка зависимостей и запуск DS_TG_BOT на VPS (Linux)
 #
 # Что делает:
-#   1. Определяет ОС и пакетный менеджер (apt / dnf / yum)
-#   2. Ставит недостающее: curl, git, Docker, Docker Compose (v2)
-#   3. Проверяет .env — если нет, создаёт из .env.example и спрашивает токены
-#   4. Собирает и запускает весь стек через docker compose
-#   5. Проверяет статус и показывает итог
+#   1. Проверяет свободное место и чистит docker-кэш при нехватке
+#   2. Определяет ОС и пакетный менеджер (apt / dnf / yum)
+#   3. Ставит недостающее: curl, git, Docker, Docker Compose (v2)
+#   4. Проверяет .env — если нет, создаёт из .env.example и спрашивает токены
+#   5. Собирает и запускает весь стек через docker compose
+#   6. Проверяет статус, ждёт готовности и показывает итог
 #
 # Запуск (в папке проекта):
 #   chmod +x deploy.sh && ./deploy.sh
 #
-# Для автоматического клона репозитория: GIT_REPO_URL=https://... ./deploy.sh
+# Автоклон репозитория: GIT_REPO_URL=https://... ./deploy.sh
 
 set -Eeuo pipefail
 
@@ -46,7 +47,27 @@ detect_os() {
   log "ОС: ${OS_ID:-unknown} (пакетный менеджер: ${PKG:-не найден})"
 }
 
-# --- Проверка/установка базовых утилит -----------------------------------
+# --- Диск ----------------------------------------------------------------
+check_disk() {
+  step "Проверка свободного места"
+  local avail
+  avail="$(df -P -k / | awk 'NR==2 {print $4}')"   # свободно в KiB
+  avail=$((avail / 1024 / 1024))                   # в GiB
+
+  log "Свободно на диске: ${avail} ГБ"
+  if [ "$avail" -lt 3 ]; then
+    warn "Места мало — чищу docker build-кэш и висячие образы..."
+    docker builder prune -f >/dev/null 2>&1 || true
+    docker image prune -f >/dev/null 2>&1 || true
+    docker system prune -f >/dev/null 2>&1 || true
+    avail="$(df -P -k / | awk 'NR==2 {print $4}')"
+    avail=$((avail / 1024 / 1024))
+    log "После очистки свободно: ${avail} ГБ"
+    [ "$avail" -lt 2 ] && die "Всё ещё мало места (<2 ГБ). Увеличь диск VPS."
+  fi
+}
+
+# --- Базовые утилиты -----------------------------------------------------
 ensure_core() {
   step "Базовые утилиты (curl, git, ca-certificates)"
   if [ "$PKG" = "apt" ]; then
@@ -56,7 +77,7 @@ ensure_core() {
   elif [ "$PKG" = "dnf" ]; then
     dnf install -y curl git ca-certificates >/dev/null
   else
-    warn "Неизвестный пакетный менеджер — пропускаю установку, проверю команды ниже."
+    warn "Неизвестный пакетный менеджер — пропускаю установку."
   fi
   ok "Готово"
 }
@@ -91,9 +112,8 @@ ensure_docker() {
     ok "Compose v2 установлен"
   fi
 
-  # если пользователь не в группе docker — подскажем, но продолжим через sudo
   if ! docker info >/dev/null 2>&1; then
-    warn "Нет доступа к docker daemon без sudo. Продолжаю с sudo (дальше возможны запросы пароля)."
+    warn "Нет доступа к docker daemon без sudo. Продолжаю с sudo."
     SUDO="sudo"
   else
     SUDO=""
@@ -113,7 +133,7 @@ ensure_repo() {
     git clone "${GIT_REPO_URL}" . || die "Не удалось склонировать репозиторий"
     ok "Репозиторий склонирован"
   else
-    die "В текущей папке нет docker-compose.yml. Запусти скрипт из папки проекта или задай GIT_REPO_URL."
+    die "В текущей папке нет docker-compose.yml. Запусти из папки проекта или задай GIT_REPO_URL."
   fi
 }
 
@@ -147,7 +167,6 @@ ensure_env() {
     ask_env PANEL_PASSWORD     "PANEL_PASSWORD (пароль панели)"
   fi
 
-  # базовая проверка обязательных секретов
   local missing=0
   for v in DISCORD_TOKEN DISCORD_CLIENT_ID TELEGRAM_BOT_TOKEN; do
     if ! grep -qE "^${v}=.+" .env; then
@@ -155,12 +174,15 @@ ensure_env() {
       missing=1
     fi
   done
-  [ "$missing" -eq 1 ] && warn "Заполни их в .env и перезапусти скрипт (docker compose up -d --build)."
+  [ "$missing" -eq 1 ] && warn "Заполни их в .env и запусти: ${SUDO:-} $COMPOSE up -d --build"
 }
 
-# --- Запуск --------------------------------------------------------------
+# --- Сборка и запуск -----------------------------------------------------
 run_stack() {
-  step "Сборка и запуск"
+  step "Сборка и запуск (первый раз 5–10 минут)"
+  log "Чищу build-кэш перед сборкой..."
+  docker builder prune -f >/dev/null 2>&1 || true
+
   ${SUDO:-} $COMPOSE up -d --build
   ok "Стек запущен"
 }
@@ -169,20 +191,32 @@ verify() {
   step "Проверка статуса"
   ${SUDO:-} $COMPOSE ps
   echo
+
   local web_port
   web_port="$(grep -E '^WEB_PORT=' .env | cut -d= -f2- || true)"
   web_port="${web_port:-3000}"
   local ip
   ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  log "Панель будет доступна на: http://${ip:-<IP-сервера>}:${web_port}"
+
+  log "Жду готовности панели (до 60с)..."
+  for i in $(seq 1 12); do
+    if curl -s -o /dev/null "http://localhost:${web_port}/login"; then
+      ok "Панель доступна: http://${ip:-<IP-сервера>}:${web_port}"
+      break
+    fi
+    sleep 5
+  done
+
   log "Пароль панели — переменная PANEL_PASSWORD в .env"
-  log "Логи: ${SUDO:-} $COMPOSE logs -f"
+  log "Логи ботов: ${SUDO:-} $COMPOSE logs -f discord-bot"
+  log "Логи telegram: ${SUDO:-} $COMPOSE logs -f telegram-bot"
 }
 
 # --- Main -----------------------------------------------------------------
 main() {
   echo -e "${C_BOLD}DS_TG_BOT — деплой на VPS${C_RESET}"
   detect_os
+  check_disk
   ensure_core
   ensure_docker
   ensure_repo
