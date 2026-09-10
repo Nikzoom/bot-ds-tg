@@ -1,42 +1,59 @@
 import { Bot } from "grammy";
-import prisma, { computeScore } from "@dsbot/db";
+import prisma from "@dsbot/db";
+import { monthRange } from "@dsbot/db";
 import { config } from "./config";
 import { startBridgePoller } from "./services/bridge";
 import { upsertTelegramUser } from "./services/users";
 import { activateChat, deactivateChat, isActive, loadActiveChats, registerChat } from "./services/chats";
+import { captureUser, findDiscordUser, resolveLinkByUsername } from "./services/links";
 import { formatDuration, monthKey, monthLabelRu } from "@dsbot/shared";
 
 export const bot = new Bot(config.token);
+
+function isPrivate(ctx: { chat?: { type?: string } }): boolean {
+  return ctx.chat?.type === "private";
+}
 
 // ---------------------------------------------------------------------------
 // /start
 // ---------------------------------------------------------------------------
 bot.command("start", async (ctx) => {
+  if (!isPrivate(ctx)) return;
   await ctx.reply(
     "👋 Привет! Я бот сообщества.\n\n" +
-      "Команды:\n" +
-      "/stats — твоя статистика за месяц\n" +
+      "Команды (пиши сюда, в личку):\n" +
+      "/stats — твоя статистика из Discord за месяц\n" +
       "/leaderboard — топ активных\n" +
       "/rules — активные правила\n\n" +
-      "Споры, награды и анонсы из Discord приходят прямо сюда."
+      "Уведомления о спорах и наградах тоже приходят сюда."
   );
 });
 
 // ---------------------------------------------------------------------------
-// /stats
+// /stats — pulls data from the Discord database via the username link
 // ---------------------------------------------------------------------------
 bot.command("stats", async (ctx) => {
+  if (!isPrivate(ctx)) return;
   const tgUser = ctx.from;
   if (!tgUser) return;
-  const name = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ");
-  const user = await upsertTelegramUser(String(tgUser.id), name);
 
-  const now = new Date();
-  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const link = await resolveLinkByUsername(tgUser.username ?? "");
+  if (!link) {
+    await ctx.reply(
+      "🔒 Ты не привязан. Попроси админа добавить в панели «Привязка аккаунтов» твой Discord ID → Telegram @username."
+    );
+    return;
+  }
 
+  const discordUser = await findDiscordUser(link.discordKey);
+  if (!discordUser) {
+    await ctx.reply("⚠️ Discord-аккаунт ещё не встречался в базе (не писал и не был в голосе).");
+    return;
+  }
+
+  const { from, to } = monthRange(monthKey());
   const agg = await prisma.dailyStat.aggregate({
-    where: { userId: user.id, date: { gte: from, lt: to } },
+    where: { userId: discordUser.id, date: { gte: from, lt: to } },
     _sum: { voiceSeconds: true, messages: true, score: true },
   });
 
@@ -45,7 +62,7 @@ bot.command("stats", async (ctx) => {
   const score = agg._sum.score ?? 0;
 
   await ctx.reply(
-    `📊 *${name}* — ${monthLabelRu(monthKey())}\n\n` +
+    `📊 *${discordUser.displayName}* — ${monthLabelRu(monthKey())}\n\n` +
       `🎙️ В голосе: ${formatDuration(voice)}\n` +
       `💬 Сообщений: ${messages}\n` +
       `⭐ Очков: ${score.toFixed(1)}`,
@@ -57,10 +74,9 @@ bot.command("stats", async (ctx) => {
 // /leaderboard
 // ---------------------------------------------------------------------------
 bot.command("leaderboard", async (ctx) => {
-  const now = new Date();
-  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  if (!isPrivate(ctx)) return;
 
+  const { from, to } = monthRange(monthKey());
   const rows = await prisma.dailyStat.groupBy({
     by: ["userId"],
     where: { date: { gte: from, lt: to } },
@@ -95,6 +111,7 @@ bot.command("leaderboard", async (ctx) => {
 // /rules
 // ---------------------------------------------------------------------------
 bot.command("rules", async (ctx) => {
+  if (!isPrivate(ctx)) return;
   const rules = await prisma.rule.findMany({ where: { enabled: true } });
   if (rules.length === 0) {
     await ctx.reply("Активных правил нет.");
@@ -107,7 +124,7 @@ bot.command("rules", async (ctx) => {
 });
 
 // ---------------------------------------------------------------------------
-// Dispute voting callback
+// Dispute voting callback (works in DM)
 // ---------------------------------------------------------------------------
 bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery.data;
@@ -135,6 +152,16 @@ bot.on("callback_query:data", async (ctx) => {
 });
 
 // ---------------------------------------------------------------------------
+// Capture the user id/username on every message (for DM resolution)
+// ---------------------------------------------------------------------------
+bot.on("message", async (ctx) => {
+  const u = ctx.from;
+  if (!u) return;
+  const name = [u.first_name, u.last_name].filter(Boolean).join(" ");
+  await captureUser(String(u.id), u.username ?? null, name);
+});
+
+// ---------------------------------------------------------------------------
 // Bot added / removed from a group
 // ---------------------------------------------------------------------------
 bot.on("my_chat_member", async (ctx) => {
@@ -153,62 +180,36 @@ bot.on("my_chat_member", async (ctx) => {
 
   if (oldStatus === "left" || oldStatus === "kicked") {
     await registerChat(chatId, chat.title);
+    // Инструкция уходит в ЛС тому, кто добавил бота
     await ctx.api.sendMessage(
-      chat.id,
-      "🔐 Бот добавлен в группу!\n\n" +
-        "Для активации напиши сюда пароль доступа (переменная TELEGRAM_JOIN_PASSWORD)."
+      update.from.id,
+      `🔐 Бот добавлен в группу «${chat.title}»!\n\n` +
+        "Для активации напиши пароль доступа (TELEGRAM_JOIN_PASSWORD) прямо в эту группу."
     );
   }
 });
 
 // ---------------------------------------------------------------------------
-// Message activity tracking (activated group chats)
+// Group password activation (bot never writes to the group)
 // ---------------------------------------------------------------------------
 bot.on("message:text", async (ctx) => {
   const chat = ctx.chat;
   const chatType = chat?.type;
   const isGroup = chatType === "group" || chatType === "supergroup";
-  const chatId = chat ? String(chat.id) : "";
+  if (!isGroup) return;
+
+  const chatId = String(chat.id);
   const text = ctx.message.text.trim();
 
-  // Activation via join password (groups only)
-  if (isGroup && !isActive(chatId)) {
+  if (!isActive(chatId)) {
     if (text === config.joinPassword) {
       await activateChat(chatId);
-      await ctx.reply(
-        "✅ Группа активирована!\n\n" +
-          "Теперь сюда будут приходить споры, награды и анонсы из Discord.\n" +
-          "Команды: /stats, /leaderboard, /rules"
+      await ctx.api.sendMessage(
+        ctx.from.id,
+        "✅ Группа активирована! Пинги из Discord будут приходить сюда."
       );
-    } else if (!text.startsWith("/")) {
-      await ctx.reply("🔐 Неверный пароль. Напиши пароль доступа для активации.");
     }
-    return;
   }
-
-  // Only track community activity from activated groups, skip commands
-  if (!isGroup || !isActive(chatId) || text.startsWith("/")) return;
-
-  const tgUser = ctx.from;
-  if (!tgUser) return;
-  const name = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ");
-  const user = await upsertTelegramUser(String(tgUser.id), name);
-
-  const day = new Date();
-  const utcDay = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
-  const existing = await prisma.dailyStat.findUnique({
-    where: { userId_date: { userId: user.id, date: utcDay } },
-  });
-  const messages = (existing?.messages ?? 0) + 1;
-  const score = await computeScore({
-    voiceSeconds: existing?.voiceSeconds ?? 0,
-    messages,
-  });
-  await prisma.dailyStat.upsert({
-    where: { userId_date: { userId: user.id, date: utcDay } },
-    create: { userId: user.id, date: utcDay, messages, score },
-    update: { messages, score },
-  });
 });
 
 export async function start(): Promise<void> {

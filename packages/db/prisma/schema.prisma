@@ -218,8 +218,10 @@ model MentionMap {
   id              String   @id @default(cuid())
   // Discord username / display name / user id (matched case-insensitively)
   discordKey      String   @unique
-  // "@username" or a numeric telegram user id
+  // "@username" (Telegram username)
   telegramMention String
+  // Numeric telegram user id, auto-resolved when the user /starts the bot
+  telegramId      String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

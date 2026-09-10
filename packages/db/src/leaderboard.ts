@@ -2,6 +2,7 @@ import { prisma } from "./client";
 
 export interface LeaderboardEntry {
   userId: string;
+  discordId: string | null;
   displayName: string;
   avatarUrl: string | null;
   voiceSeconds: number;
@@ -67,6 +68,7 @@ export async function getLeaderboard(
     const games = await aggregateGames(row.userId, from, to);
     entries.push({
       userId: row.userId,
+      discordId: u.discordId,
       displayName: u.displayName,
       avatarUrl: u.avatarUrl,
       voiceSeconds: row._sum.voiceSeconds ?? 0,

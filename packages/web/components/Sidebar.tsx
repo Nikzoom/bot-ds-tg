@@ -7,7 +7,7 @@ const items = [
   { href: "/", label: "Дашборд", icon: "◈" },
   { href: "/rules", label: "Правила", icon: "⚙" },
   { href: "/disputes", label: "Споры", icon: "⚖" },
-  { href: "/mentions", label: "Упоминания", icon: "🔔" },
+  { href: "/mentions", label: "Привязка аккаунтов", icon: "🔔" },
   { href: "/leaderboard", label: "Топ активности", icon: "▥" },
   { href: "/awards", label: "Награды", icon: "★" },
   { href: "/settings", label: "Настройки", icon: "☰" },

@@ -128,6 +128,7 @@ export interface BridgePayloadAward {
   points: number;
   month: string;
   category: string;
+  discordId: string | null;
 }
 
 export interface BridgePayloadAnnounce {

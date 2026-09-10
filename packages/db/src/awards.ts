@@ -39,6 +39,7 @@ export async function computeMonthlyAwards(key: string): Promise<string[]> {
       points: leaders[0].score,
       month: key,
       category: "most_active",
+      discordId: leaders[0].discordId,
     });
   }
 

@@ -40,19 +40,19 @@ export default function MentionManager({ mentions }: { mentions: Mention[] }) {
         <h2>➕ Добавить привязку</h2>
         <div className="gap" style={{ alignItems: "flex-end" }}>
           <div className="field" style={{ flex: 1 }}>
-            <label>Discord (ник / username / ID)</label>
+            <label>Discord ID (или ник)</label>
             <input
               value={discordKey}
               onChange={(e) => setDiscordKey(e.target.value)}
-              placeholder="например: nikita"
+              placeholder="например: 1051574928270430298"
             />
           </div>
           <div className="field" style={{ flex: 1 }}>
-            <label>Telegram (@username или ID)</label>
+            <label>Telegram @username</label>
             <input
               value={telegramMention}
               onChange={(e) => setTelegramMention(e.target.value)}
-              placeholder="@nikita или 123456789"
+              placeholder="@nikita"
             />
           </div>
           <button className="btn btn-primary" onClick={add} disabled={saving} style={{ marginBottom: 16 }}>
@@ -60,7 +60,7 @@ export default function MentionManager({ mentions }: { mentions: Mention[] }) {
           </button>
         </div>
         <p className="muted" style={{ fontSize: 13 }}>
-          Если указать @username — в ТГ придёт просто упоминание текстом. Если указать числовой Telegram ID — сработает настоящее @упоминание с уведомлением.
+          Telegram указывается как @username. Числовой ID бот подставит сам, когда участник напишет ему /start в личку (нужно для доставки уведомлений в ЛС).
         </p>
       </div>
 

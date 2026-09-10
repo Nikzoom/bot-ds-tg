@@ -8,9 +8,9 @@ export default async function MentionsPage() {
 
   return (
     <>
-      <h1>Упоминания</h1>
+      <h1>Привязка аккаунтов</h1>
       <p className="subtitle">
-        Связь Discord-ников с Telegram. Если пингуемого в Discord нет в сети — уведомление придёт сюда в группу.
+        Связь Discord ID ↔ Telegram @username. По ней работает /stats в Telegram, пинги и уведомления в ЛС.
       </p>
       <MentionManager mentions={mentions} />
     </>
