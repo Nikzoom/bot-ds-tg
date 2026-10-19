@@ -41,12 +41,11 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  if (pathname.startsWith("/api")) {
-    return NextResponse.next();
-  }
-
   const cookie = req.cookies.get(COOKIE_NAME)?.value;
   if (!(await verify(cookie))) {
+    if (pathname.startsWith("/api")) {
+      return NextResponse.json({ error: "Требуется вход в панель" }, { status: 401 });
+    }
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

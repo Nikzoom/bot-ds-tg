@@ -16,7 +16,7 @@ $DC ps
 echo
 
 echo "==================== ЛОГИ (последние строки) ===================="
-for s in postgres discord-bot telegram-bot web; do
+for s in postgres discord-bot web; do
   echo "--- $s ---"
   $DC logs --tail=15 "$s" 2>&1 | tail -n 15
   echo

@@ -1,0 +1,4 @@
+ALTER TABLE "VoicePenaltyConfig"
+ADD COLUMN "waitMinutes" INTEGER NOT NULL DEFAULT 90,
+ADD COLUMN "suspendMinutes" INTEGER NOT NULL DEFAULT 20,
+ADD COLUMN "destinationChannelId" TEXT;

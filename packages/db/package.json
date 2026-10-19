@@ -12,10 +12,10 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@prisma/client": "^6.2.1"
+    "@prisma/client": "^6.2.1",
+    "prisma": "^6.2.1"
   },
   "devDependencies": {
-    "prisma": "^6.2.1",
     "typescript": "^5.6.3"
   }
 }

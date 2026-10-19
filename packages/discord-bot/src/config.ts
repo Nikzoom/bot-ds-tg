@@ -12,4 +12,5 @@ export const config = {
   guildId: process.env.DISCORD_GUILD_ID || "",
   rulesEvalIntervalMs: Number(process.env.RULES_EVAL_INTERVAL_MS || 30000),
   panelApiSecret: process.env.PANEL_API_SECRET || "change-me",
+  valorantRoleIds: [...new Set((process.env.VALORANT_ROLE_IDS || "").split(",").map((id) => id.trim()).filter(Boolean))],
 };

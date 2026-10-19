@@ -46,6 +46,18 @@ model GuildConfig {
   updatedAt      DateTime @updatedAt
 }
 
+model VoicePenaltyConfig {
+  guildId      String   @id
+  enabled      Boolean  @default(false)
+  firstRoleId  String?
+  secondRoleId String?
+  waitMinutes  Int      @default(90)
+  repeatExtraMinutes Int @default(20)
+  suspendMinutes Int    @default(20)
+  destinationChannelId String?
+  updatedAt    DateTime @updatedAt
+}
+
 // ---------------------------------------------------------------------------
 // Activity events
 // ---------------------------------------------------------------------------
@@ -67,6 +79,31 @@ model VoiceSession {
 
   @@index([userId, joinedAt])
   @@index([guildId, joinedAt])
+}
+
+model VoicePairWindow {
+  id          String   @id
+  guildId     String
+  channelId   String
+  firstUserId String
+  secondUserId String
+  startedAt   DateTime @default(now())
+  penalizedAt DateTime?
+  repeatCount Int      @default(0)
+  active      Boolean  @default(true)
+
+  @@index([guildId, active])
+}
+
+model RoleSuspension {
+  id        String   @id @default(cuid())
+  guildId   String
+  userId    String
+  roleId    String
+  expiresAt DateTime
+
+  @@unique([guildId, userId, roleId])
+  @@index([expiresAt])
 }
 
 model PresenceEvent {

@@ -7,11 +7,12 @@ import { config } from "../config";
 import { monthKey } from "@dsbot/shared";
 import { upsertDiscordUser } from "../services/users";
 import { startVoiceSession, closeOrphanSessions } from "../services/stats";
+import { evaluateValorantVoicePenalty } from "../services/valorantVoicePenalty";
 
 export async function onReady(client: Client, engine: RulesEngine): Promise<void> {
   console.log(`✅ Discord bot logged in as ${client.user?.tag}`);
 
-  await registerCommands(client);
+  await registerCommands(client).catch((error) => console.error("Не удалось обновить slash-команды:", error));
 
   const closed = await closeOrphanSessions();
   if (closed > 0) console.log(`♻️ Закрыл незавершённых голосовых сессий: ${closed}`);
@@ -21,6 +22,8 @@ export async function onReady(client: Client, engine: RulesEngine): Promise<void
 
   // Periodically re-evaluate voice rules (e.g. "3 people in VC => Valorant")
   setInterval(() => engine.evaluateVoiceRules().catch(console.error), config.rulesEvalIntervalMs);
+  await evaluateValorantVoicePenalty(client);
+  setInterval(() => evaluateValorantVoicePenalty(client).catch(console.error), 15000);
 
   // Monthly awards: run on the last day of the month at 23:00
   cron.schedule("0 23 28-31 * *", async () => {

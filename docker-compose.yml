@@ -1,7 +1,14 @@
+x-logging: &app-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *app-logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-dsbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dsbot_password}
@@ -21,16 +28,23 @@ services:
       target: bots
     image: ds-tg-bot-bots
     restart: unless-stopped
+    logging: *app-logging
     env_file: .env
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "npx prisma migrate deploy --schema /app/packages/db/prisma/schema.prisma && node dist/index.js"
+    command: sh -c "/app/node_modules/.bin/prisma migrate deploy --schema /app/packages/db/prisma/schema.prisma && node dist/index.js"
     working_dir: /app/packages/discord-bot
 
   telegram-bot:
-    image: ds-tg-bot-bots
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: telegram
+    image: ds-tg-bot-telegram
+    profiles: [telegram]
     restart: unless-stopped
+    logging: *app-logging
     env_file: .env
     depends_on:
       discord-bot:
@@ -47,6 +61,7 @@ services:
       target: web
     image: ds-tg-bot-web
     restart: unless-stopped
+    logging: *app-logging
     env_file: .env
     ports:
       - "${WEB_PORT:-3000}:3000"

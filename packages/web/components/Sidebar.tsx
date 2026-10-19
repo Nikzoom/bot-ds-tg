@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const items = [
   { href: "/", label: "Дашборд", icon: "◈" },
   { href: "/rules", label: "Правила", icon: "⚙" },
+  { href: "/voice-penalty", label: "Valorant и роли", icon: "🎮" },
   { href: "/disputes", label: "Споры", icon: "⚖" },
   { href: "/mentions", label: "Привязка аккаунтов", icon: "🔔" },
   { href: "/leaderboard", label: "Топ активности", icon: "▥" },

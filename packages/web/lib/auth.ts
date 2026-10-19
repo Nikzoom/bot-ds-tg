@@ -22,7 +22,9 @@ export function verify(cookie: string | undefined): boolean {
 
 export function checkPassword(password: string): boolean {
   const expected = process.env.PANEL_PASSWORD || "admin";
-  return timingSafeEqual(Buffer.from(password), Buffer.from(expected));
+  const actualBuffer = Buffer.from(password);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 export const authCookieName = COOKIE_NAME;

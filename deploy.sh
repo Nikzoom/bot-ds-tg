@@ -1,237 +1,94 @@
 #!/usr/bin/env bash
-#
-# deploy.sh — установка зависимостей и запуск DS_TG_BOT на VPS (Linux)
-#
-# Что делает:
-#   1. Проверяет свободное место и чистит docker-кэш при нехватке
-#   2. Определяет ОС и пакетный менеджер (apt / dnf / yum)
-#   3. Ставит недостающее: curl, git, Docker, Docker Compose (v2)
-#   4. Проверяет .env — если нет, создаёт из .env.example и спрашивает токены
-#   5. Собирает и запускает весь стек через docker compose
-#   6. Проверяет статус, ждёт готовности и показывает итог
-#
-# Запуск (в папке проекта):
-#   chmod +x deploy.sh && ./deploy.sh
-#
-# Автоклон репозитория: GIT_REPO_URL=https://... ./deploy.sh
-
+# Запуск и обновление Discord-бота на VPS (Ubuntu/Debian).
 set -Eeuo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
-# --- Цвета ---------------------------------------------------------------
-C_RESET='\033[0m'; C_BOLD='\033[1m'
-C_OK='\033[0;32m'; C_INFO='\033[0;36m'; C_WARN='\033[0;33m'; C_ERR='\033[0;31m'
+fail() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
+info() { printf '\n==> %s\n' "$*"; }
 
-log()  { echo -e "${C_INFO}[INFO]${C_RESET} $*"; }
-ok()   { echo -e "${C_OK}[ OK ]${C_RESET} $*"; }
-warn() { echo -e "${C_WARN}[WARN]${C_RESET} $*"; }
-err()  { echo -e "${C_ERR}[FAIL]${C_RESET} $*" >&2; }
-step() { echo -e "\n${C_BOLD}==> $*${C_RESET}"; }
+[ -f docker-compose.yml ] || fail "Запусти скрипт из репозитория."
+[ -f .env.example ] || fail ".env.example не найден."
 
-die() { err "$*"; exit 1; }
+if ! command -v docker >/dev/null 2>&1; then
+  info "Устанавливаю Docker из репозитория системы"
+  command -v apt-get >/dev/null 2>&1 || fail "Автоустановка поддерживается на Ubuntu/Debian. Установи Docker вручную."
+  if [ "$(id -u)" -eq 0 ]; then SUDO=(); else SUDO=(sudo); fi
+  "${SUDO[@]}" apt-get update
+  "${SUDO[@]}" apt-get install -y docker.io
+  "${SUDO[@]}" apt-get install -y docker-compose-plugin || \
+    "${SUDO[@]}" apt-get install -y docker-compose-v2 || \
+    fail "Не удалось установить Docker Compose v2"
+  "${SUDO[@]}" systemctl enable --now docker
+fi
 
-# --- Определение ОС ------------------------------------------------------
-detect_os() {
-  if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    OS_ID="${ID:-}"
-  else
-    OS_ID=""
+if docker info >/dev/null 2>&1; then SUDO=(); else SUDO=(sudo); fi
+if ! "${SUDO[@]}" docker compose version >/dev/null 2>&1; then
+  command -v apt-get >/dev/null 2>&1 || fail "Нужен Docker Compose v2 (docker compose)."
+  "${SUDO[@]}" apt-get update
+  "${SUDO[@]}" apt-get install -y docker-compose-plugin || \
+    "${SUDO[@]}" apt-get install -y docker-compose-v2 || \
+    fail "Не удалось установить Docker Compose v2"
+fi
+if ! "${SUDO[@]}" docker buildx version >/dev/null 2>&1; then
+  command -v apt-get >/dev/null 2>&1 || fail "Нужен Docker Buildx"
+  "${SUDO[@]}" apt-get install -y docker-buildx-plugin || \
+    "${SUDO[@]}" apt-get install -y docker-buildx || \
+    fail "Не удалось установить Docker Buildx"
+fi
+"${SUDO[@]}" docker info >/dev/null 2>&1 || fail "Docker daemon недоступен"
+if command -v apt-get >/dev/null 2>&1; then "${SUDO[@]}" apt-get clean; fi
+
+if [ ! -f .env ]; then
+  cp .env.example .env
+  chmod 600 .env
+  printf '%s\n' 'Создан .env. Заполни DISCORD_TOKEN, DISCORD_CLIENT_ID, DISCORD_GUILD_ID и пароли БД/панели, затем повтори запуск. ID ролей задаются в панели.'
+  exit 1
+fi
+
+env_value() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d '\r'; }
+for name in DISCORD_TOKEN DISCORD_CLIENT_ID DISCORD_GUILD_ID POSTGRES_PASSWORD PANEL_PASSWORD PANEL_API_SECRET; do
+  [ -n "$(env_value "$name")" ] || fail "$name не задан в .env"
+done
+[ "$(env_value POSTGRES_PASSWORD)" != 'dsbot_password' ] || fail "Замени стандартный POSTGRES_PASSWORD"
+[ "$(env_value PANEL_PASSWORD)" != 'admin' ] || fail "Замени стандартный PANEL_PASSWORD"
+[ "$(env_value PANEL_API_SECRET)" != 'change-me' ] || fail "Замени стандартный PANEL_API_SECRET"
+[ "$(env_value DATABASE_URL)" != 'postgresql://dsbot:dsbot_password@postgres:5432/dsbot?schema=public' ] || fail "Укажи в DATABASE_URL тот же пароль, что в POSTGRES_PASSWORD"
+
+docker_root="$("${SUDO[@]}" docker info --format '{{.DockerRootDir}}')"
+free_mib="$(df -Pm "$docker_root" | awk 'NR==2 {print $4}')"
+if [ "$free_mib" -lt 4096 ]; then
+  info "Свободно менее 4 ГБ; очищаю неиспользуемый кэш сборки и старые образы проекта"
+  "${SUDO[@]}" docker builder prune -f --keep-storage 512MB >/dev/null
+  "${SUDO[@]}" docker image prune -f --filter label=app=dsbot >/dev/null
+  free_mib="$(df -Pm "$docker_root" | awk 'NR==2 {print $4}')"
+fi
+[ "$free_mib" -ge 3072 ] || fail "Для сборки нужно хотя бы 3 ГБ свободного места в разделе Docker; сейчас ${free_mib} МБ"
+
+info "Собираю Discord-бота и панель последовательно"
+"${SUDO[@]}" docker compose build discord-bot
+"${SUDO[@]}" docker compose build web
+"${SUDO[@]}" docker compose up -d --no-build postgres discord-bot web
+# Если Telegram запускался прежней версией compose, останавливаем его.
+"${SUDO[@]}" docker compose --profile telegram stop telegram-bot >/dev/null 2>&1 || true
+
+info "Жду подключения Discord-бота"
+ready=0
+for attempt in {1..18}; do
+  if "${SUDO[@]}" docker compose logs --no-color discord-bot 2>/dev/null | grep -F 'Discord bot logged in as' >/dev/null; then
+    ready=1
+    break
   fi
+  sleep 5
+done
+if [ "$ready" -ne 1 ]; then
+  "${SUDO[@]}" docker compose logs --tail=50 discord-bot >&2
+  fail "Бот не подключился к Discord за 90 секунд"
+fi
 
-  case "$OS_ID" in
-    ubuntu|debian|linuxmint|pop) PKG=apt ;;
-    centos|rhel|rocky|almalinux|fedora|ol|amzn) PKG=dnf ;;
-    *) PKG="" ;;
-  esac
-
-  log "ОС: ${OS_ID:-unknown} (пакетный менеджер: ${PKG:-не найден})"
-}
-
-# --- Диск ----------------------------------------------------------------
-check_disk() {
-  step "Проверка свободного места"
-  local avail
-  avail="$(df -P -k / | awk 'NR==2 {print $4}')"   # свободно в KiB
-  avail=$((avail / 1024 / 1024))                   # в GiB
-
-  log "Свободно на диске: ${avail} ГБ"
-  if [ "$avail" -lt 3 ]; then
-    warn "Места мало — чищу docker build-кэш и висячие образы..."
-    docker builder prune -f >/dev/null 2>&1 || true
-    docker image prune -f >/dev/null 2>&1 || true
-    docker system prune -f >/dev/null 2>&1 || true
-    avail="$(df -P -k / | awk 'NR==2 {print $4}')"
-    avail=$((avail / 1024 / 1024))
-    log "После очистки свободно: ${avail} ГБ"
-    if [ "$avail" -lt 2 ]; then
-      die "Всё ещё мало места (<2 ГБ). Увеличь диск VPS."
-    fi
-  fi
-  return 0
-}
-
-# --- Базовые утилиты -----------------------------------------------------
-ensure_core() {
-  step "Базовые утилиты (curl, git, ca-certificates)"
-  if [ "$PKG" = "apt" ]; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y >/dev/null
-    apt-get install -y curl git ca-certificates gnupg lsb-release >/dev/null
-  elif [ "$PKG" = "dnf" ]; then
-    dnf install -y curl git ca-certificates >/dev/null
-  else
-    warn "Неизвестный пакетный менеджер — пропускаю установку."
-  fi
-  ok "Готово"
-}
-
-# --- Docker --------------------------------------------------------------
-ensure_docker() {
-  step "Docker + Docker Compose"
-  if command -v docker >/dev/null 2>&1; then
-    ok "Docker уже установлен: $(docker --version)"
-  else
-    log "Docker не найден — устанавливаю через официальный скрипт get.docker.com..."
-    curl -fsSL https://get.docker.com | sh >/dev/null 2>&1 || die "Не удалось установить Docker"
-    systemctl enable --now docker >/dev/null 2>&1 || true
-    ok "Docker установлен"
-  fi
-
-  if docker compose version >/dev/null 2>&1; then
-    ok "Docker Compose v2: $(docker compose version --short 2>/dev/null || echo ok)"
-  elif command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE="docker-compose"
-    ok "Docker Compose v1 (docker-compose)"
-  else
-    warn "Compose-плагин отсутствует — доустанавливаю..."
-    if [ "$PKG" = "apt" ]; then
-      apt-get install -y docker-compose-plugin >/dev/null 2>&1 || \
-        die "Не удалось установить docker-compose-plugin"
-    elif [ "$PKG" = "dnf" ]; then
-      dnf install -y docker-compose-plugin >/dev/null 2>&1 || \
-        die "Не удалось установить docker-compose-plugin"
-    fi
-    COMPOSE="docker compose"
-    ok "Compose v2 установлен"
-  fi
-
-  if ! docker info >/dev/null 2>&1; then
-    warn "Нет доступа к docker daemon без sudo. Продолжаю с sudo."
-    SUDO="sudo"
-  else
-    SUDO=""
-  fi
-}
-
-# --- Репозиторий ---------------------------------------------------------
-ensure_repo() {
-  step "Проверка проекта"
-  if [ -f docker-compose.yml ]; then
-    ok "Проект найден в текущей папке: $(pwd)"
-    return
-  fi
-
-  if [ -n "${GIT_REPO_URL:-}" ]; then
-    log "docker-compose.yml не найден — клонирую из ${GIT_REPO_URL}..."
-    git clone "${GIT_REPO_URL}" . || die "Не удалось склонировать репозиторий"
-    ok "Репозиторий склонирован"
-  else
-    die "В текущей папке нет docker-compose.yml. Запусти из папки проекта или задай GIT_REPO_URL."
-  fi
-}
-
-# --- .env ----------------------------------------------------------------
-ask_env() {
-  local var="$1" prompt="$2"
-  local cur
-  cur="$(grep -E "^${var}=" .env | tail -1 | cut -d= -f2- || true)"
-  if [ -z "$cur" ]; then
-    printf "%b" "  ${prompt}: "
-    read -r val
-    if [ -n "$val" ]; then
-      sed -i "s|^${var}=.*|${var}=${val}|" .env
-    fi
-  fi
-}
-
-ensure_env() {
-  step "Конфигурация (.env)"
-  if [ -f .env ]; then
-    ok ".env уже существует — оставляю как есть"
-  else
-    [ -f .env.example ] || die ".env.example не найден"
-    cp .env.example .env
-    log "Создан .env из .env.example. Заполни токены (пустое — оставит пустым):"
-    ask_env DISCORD_TOKEN      "DISCORD_TOKEN"
-    ask_env DISCORD_CLIENT_ID  "DISCORD_CLIENT_ID"
-    ask_env TELEGRAM_BOT_TOKEN "TELEGRAM_BOT_TOKEN"
-    ask_env TELEGRAM_JOIN_PASSWORD "TELEGRAM_JOIN_PASSWORD (пароль активации группы)"
-    ask_env DISCORD_GUILD_ID   "DISCORD_GUILD_ID (можно позже)"
-    ask_env PANEL_PASSWORD     "PANEL_PASSWORD (пароль панели)"
-  fi
-
-  local missing=0
-  for v in DISCORD_TOKEN DISCORD_CLIENT_ID TELEGRAM_BOT_TOKEN; do
-    if ! grep -qE "^${v}=.+" .env; then
-      warn "${v} не заполнен"
-      missing=1
-    fi
-  done
-  if [ "$missing" -eq 1 ]; then
-    warn "Заполни их в .env и запусти: ${SUDO:-} $COMPOSE up -d --build"
-  fi
-  return 0
-}
-
-# --- Сборка и запуск -----------------------------------------------------
-run_stack() {
-  step "Сборка и запуск (первый раз 5–10 минут)"
-  log "Чищу build-кэш перед сборкой..."
-  docker builder prune -f >/dev/null 2>&1 || true
-
-  ${SUDO:-} $COMPOSE up -d --build
-  ok "Стек запущен"
-}
-
-verify() {
-  step "Проверка статуса"
-  ${SUDO:-} $COMPOSE ps
-  echo
-
-  local web_port
-  web_port="$(grep -E '^WEB_PORT=' .env | cut -d= -f2- || true)"
-  web_port="${web_port:-3000}"
-  local ip
-  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-
-  log "Жду готовности панели (до 60с)..."
-  for i in $(seq 1 12); do
-    if curl -s -o /dev/null "http://localhost:${web_port}/login"; then
-      ok "Панель доступна: http://${ip:-<IP-сервера>}:${web_port}"
-      break
-    fi
-    sleep 5
-  done
-
-  log "Пароль панели — переменная PANEL_PASSWORD в .env"
-  log "Логи ботов: ${SUDO:-} $COMPOSE logs -f discord-bot"
-  log "Логи telegram: ${SUDO:-} $COMPOSE logs -f telegram-bot"
-}
-
-# --- Main -----------------------------------------------------------------
-main() {
-  echo -e "${C_BOLD}DS_TG_BOT — деплой на VPS${C_RESET}"
-  detect_os
-  check_disk
-  ensure_core
-  ensure_docker
-  ensure_repo
-  ensure_env
-  run_stack
-  verify
-  ok "Всё готово!"
-}
-
-COMPOSE="docker compose"
-SUDO=""
-main "$@"
+info "Состояние контейнеров"
+"${SUDO[@]}" docker compose ps
+info "Очищаю кэш сборки и старые образы проекта; данные PostgreSQL сохраняются"
+"${SUDO[@]}" docker builder prune -f --keep-storage 512MB >/dev/null || true
+"${SUDO[@]}" docker image prune -f --filter label=app=dsbot >/dev/null || true
+"${SUDO[@]}" docker system df
+printf '\nЛоги Discord-бота: %s docker compose logs -f discord-bot\n' "${SUDO[*]}"
